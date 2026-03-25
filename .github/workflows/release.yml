@@ -8,83 +8,92 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-releases:
-    runs-on: ${{ matrix.os }}
+  build-release:
+    runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            arch: x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            arch: aarch64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            arch: x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            arch: aarch64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: x86_64
+          - operating-system: ubuntu-22.04
+            targets: x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl,aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl
+          - operating-system: windows-latest
+            targets: x86_64-pc-windows-msvc
+          - operating-system: macos-latest
+            targets: x86_64-apple-darwin,aarch64-apple-darwin
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "21.12"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.targets }}
 
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Rust caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up QEMU
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cross
+        run: cargo install cross
+
+      - name: Build targets
+        run: |
+          IFS=',' read -ra TARGETS <<< "${{ matrix.targets }}"
+          for target in "${TARGETS[@]}"; do
+            echo "Building for $target"
+            if [[ "$target" == *musl* ]] || [[ "$target" == *aarch64* && "$target" != *apple* ]]; then
+              cross build --release --target "$target"
+            else
+              cargo build --release --target "$target"
+            fi
+          done
 
       - name: Create release artifacts
         shell: bash
         run: |
-          mkdir -p release-artifacts
-          cp target/${{ matrix.target }}/release/pact-sse-plugin${{ matrix.os == 'windows-latest' && '.exe' || '' }} release-artifacts/
-          cp pact-plugin.json release-artifacts/
-          
-          # Create gzipped binary
-          if [ "${{ matrix.os }}" != "windows-latest" ]; then
-            gzip -k release-artifacts/pact-sse-plugin
-          fi
+          mkdir -p release_artifacts
+          IFS=',' read -ra TARGETS <<< "${{ matrix.targets }}"
+          for target in "${TARGETS[@]}"; do
+            binary="pact-sse-plugin"
+            if [ "${{ runner.os }}" == "Windows" ]; then
+              binary="${binary}.exe"
+            fi
+            src="target/${target}/release/${binary}"
+            if [ -f "$src" ]; then
+              os_name="linux"
+              if [ "${{ runner.os }}" == "macOS" ]; then
+                os_name="osx"
+              elif [ "${{ runner.os }}" == "Windows" ]; then
+                os_name="windows"
+              fi
+              arch_name=$(echo "$target" | sed 's/.*-//' | sed 's/-.*//')
+              if [ "$arch_name" == "aarch64" ]; then
+                arch_name="aarch64"
+              elif [ "$arch_name" == "x86_64" ]; then
+                arch_name="x86_64"
+              fi
+              cp "$src" "release_artifacts/pact-sse-plugin-${os_name}-${arch_name}"
+              if [ "${{ runner.os }}" != "Windows" ]; then
+                gzip -k "release_artifacts/pact-sse-plugin-${os_name}-${arch_name}"
+                sha256sum "release_artifacts/pact-sse-plugin-${os_name}-${arch_name}.gz" > "release_artifacts/pact-sse-plugin-${os_name}-${arch_name}.gz.sha256"
+              fi
+            fi
+          done
+          cp pact-plugin.json release_artifacts/
+          sha256sum release_artifacts/pact-plugin.json > release_artifacts/pact-plugin.json.sha256
 
-      - name: Calculate checksums
-        shell: bash
-        run: |
-          cd release-artifacts
-          if [ "${{ matrix.os }}" != "windows-latest" ]; then
-            sha256sum pact-sse-plugin.gz > pact-sse-plugin.gz.sha256
-          fi
-          sha256sum pact-plugin.json > pact-plugin.json.sha256
-
-      - name: Upload release artifacts
-        uses: softprops/action-gh-release@v1
+      - name: Upload Release Assets
+        uses: svenstaro/upload-release-action@v2
         with:
-          files: |
-            release-artifacts/pact-sse-plugin${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-            release-artifacts/pact-sse-plugin.gz
-            release-artifacts/pact-sse-plugin.gz.sha256
-            release-artifacts/pact-plugin.json
-            release-artifacts/pact-plugin.json.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish-plugins:
-    needs: build-releases
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update plugin index
-        run: |
-          echo "Plugin release artifacts built successfully"
-          echo "Artifacts are now available in the release"
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: release_artifacts/*
+          file_glob: true
+          tag: ${{ github.ref }}

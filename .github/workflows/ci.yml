@@ -11,35 +11,27 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable]
+        operating-system: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "21.12"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --verbose
@@ -55,38 +47,3 @@ jobs:
 
       - name: Run fmt check
         run: cargo fmt -- --check
-
-  cross-build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-gnu
-          - aarch64-unknown-linux-musl
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "21.12"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross
-        run: cargo install cross
-
-      - name: Build for ${{ matrix.target }}
-        run: cross build --release --target ${{ matrix.target }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pact-sse-plugin-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pact-sse-plugin
