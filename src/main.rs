@@ -19,7 +19,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = listener.local_addr()?;
 
     let server_key = Uuid::new_v4().to_string();
-    println!(r#"{{"port":{}, "serverKey":"{}"}}"#, address.port(), server_key);
+    println!(
+        r#"{{"port":{}, "serverKey":"{}"}}"#,
+        address.port(),
+        server_key
+    );
     let _ = std::io::stdout().flush();
 
     let plugin = SsePactPlugin {

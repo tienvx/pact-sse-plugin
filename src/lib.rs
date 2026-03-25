@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::proto::body::ContentTypeHint;
 use crate::proto::catalogue_entry::EntryType;
 use crate::proto::pact_plugin_server::PactPlugin;
-use crate::sse_content::{SseEvent, compare_sse_events, parse_sse_content, format_sse_content};
+use crate::sse_content::{compare_sse_events, format_sse_content, parse_sse_content, SseEvent};
 
 pub type MockServerMap = Arc<Mutex<HashMap<String, MockServer>>>;
 
@@ -45,7 +45,10 @@ impl PactPlugin for SsePactPlugin {
         request: tonic::Request<proto::InitPluginRequest>,
     ) -> Result<tonic::Response<proto::InitPluginResponse>, Status> {
         let message = request.get_ref();
-        debug!("Init request from {}/{}", message.implementation, message.version);
+        debug!(
+            "Init request from {}/{}",
+            message.implementation, message.version
+        );
 
         Ok(Response::new(proto::InitPluginResponse {
             catalogue: vec![
@@ -107,18 +110,28 @@ impl PactPlugin for SsePactPlugin {
                     .rules
                     .iter()
                     .map(|(key, rules)| {
-                        let rule_list = rules.rule.iter().fold(RuleList::empty(RuleLogic::And), |mut list, rule| {
-                            if let Some(values) = &rule.values {
-                                let obj = proto::to_object(values);
-                                if let Value::Object(mut map) = obj {
-                                    map.insert("match".to_string(), Value::String(rule.r#type.clone()));
-                                    if let Ok(matching_rule) = pact_models::matchingrules::MatchingRule::from_json(&Value::Object(map)) {
-                                        list.add_rule(&matching_rule);
+                        let rule_list = rules.rule.iter().fold(
+                            RuleList::empty(RuleLogic::And),
+                            |mut list, rule| {
+                                if let Some(values) = &rule.values {
+                                    let obj = proto::to_object(values);
+                                    if let Value::Object(mut map) = obj {
+                                        map.insert(
+                                            "match".to_string(),
+                                            Value::String(rule.r#type.clone()),
+                                        );
+                                        if let Ok(matching_rule) =
+                                            pact_models::matchingrules::MatchingRule::from_json(
+                                                &Value::Object(map),
+                                            )
+                                        {
+                                            list.add_rule(&matching_rule);
+                                        }
                                     }
                                 }
-                            }
-                            list
-                        });
+                                list
+                            },
+                        );
                         (key.clone(), rule_list)
                     })
                     .collect();
@@ -183,7 +196,10 @@ impl PactPlugin for SsePactPlugin {
         &self,
         request: tonic::Request<proto::ConfigureInteractionRequest>,
     ) -> Result<tonic::Response<proto::ConfigureInteractionResponse>, Status> {
-        debug!("configure_interaction request for '{}'", request.get_ref().content_type);
+        debug!(
+            "configure_interaction request for '{}'",
+            request.get_ref().content_type
+        );
 
         let contents_config = request.get_ref().contents_config.as_ref().unwrap();
         let config_map = proto::to_object(contents_config);
@@ -208,7 +224,8 @@ impl PactPlugin for SsePactPlugin {
                         message_metadata: None,
                         plugin_configuration: None,
                         interaction_markup: String::new(),
-                        interaction_markup_type: proto::interaction_response::MarkupType::CommonMark as i32,
+                        interaction_markup_type: proto::interaction_response::MarkupType::CommonMark
+                            as i32,
                         part_name: "response".to_string(),
                         metadata_rules: HashMap::new(),
                         metadata_generators: HashMap::new(),
@@ -254,7 +271,11 @@ impl PactPlugin for SsePactPlugin {
         let pact = req.pact.clone();
         let host_interface = req.host_interface.clone();
         let port = if req.port == 0 { 0 } else { req.port };
-        info!("start_mock_server request: port={}, pact={}", port, &pact[..pact.len().min(100)]);
+        info!(
+            "start_mock_server request: port={}, pact={}",
+            port,
+            &pact[..pact.len().min(100)]
+        );
 
         let server_key = Uuid::new_v4().to_string();
         let server_key_for_response = server_key.clone();
@@ -266,7 +287,9 @@ impl PactPlugin for SsePactPlugin {
         let listener = TcpListener::bind(addr)
             .await
             .map_err(|e| Status::aborted(format!("Failed to bind: {}", e)))?;
-        let local_addr = listener.local_addr().map_err(|e| Status::aborted(format!("Failed to get local addr: {}", e)))?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| Status::aborted(format!("Failed to get local addr: {}", e)))?;
 
         let mock_server = MockServer {
             port: local_addr.port() as u32,
@@ -343,16 +366,18 @@ impl PactPlugin for SsePactPlugin {
         _request: tonic::Request<proto::VerificationPreparationRequest>,
     ) -> Result<tonic::Response<proto::VerificationPreparationResponse>, Status> {
         Ok(Response::new(proto::VerificationPreparationResponse {
-            response: Some(proto::verification_preparation_response::Response::InteractionData(
-                proto::InteractionData {
-                    body: Some(proto::Body {
-                        content_type: "text/event-stream".to_string(),
-                        content: None,
-                        content_type_hint: ContentTypeHint::Default as i32,
-                    }),
-                    metadata: HashMap::new(),
-                },
-            )),
+            response: Some(
+                proto::verification_preparation_response::Response::InteractionData(
+                    proto::InteractionData {
+                        body: Some(proto::Body {
+                            content_type: "text/event-stream".to_string(),
+                            content: None,
+                            content_type_hint: ContentTypeHint::Default as i32,
+                        }),
+                        metadata: HashMap::new(),
+                    },
+                ),
+            ),
         }))
     }
 
@@ -386,7 +411,11 @@ async fn run_sse_mock_server(listener: TcpListener, server_key: String, pact: St
     }
 }
 
-async fn handle_sse_connection(stream: TcpStream, _server_key: String, _pact: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_sse_connection(
+    stream: TcpStream,
+    _server_key: String,
+    _pact: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (read_half, mut write_half) = stream.into_split();
 
     let response_headers = "HTTP/1.1 200 OK\r\n\
@@ -405,7 +434,9 @@ async fn handle_sse_connection(stream: TcpStream, _server_key: String, _pact: &s
         retry: Some(3000),
     };
 
-    write_half.write_all(default_event.format().as_bytes()).await?;
+    write_half
+        .write_all(default_event.format().as_bytes())
+        .await?;
     write_half.flush().await?;
 
     let _ = read_half;
@@ -417,7 +448,7 @@ pub struct TcpIncoming {
     pub inner: TcpListener,
 }
 
-  impl Stream for TcpIncoming {
+impl Stream for TcpIncoming {
     type Item = Result<TcpStream, std::io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

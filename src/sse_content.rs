@@ -42,9 +42,15 @@ impl SseEvent {
                 }
                 current_event.data.push_str(data_value);
             } else if line.starts_with("event:") {
-                current_event.event = Some(line.strip_prefix("event:").unwrap_or(line).trim().to_string());
+                current_event.event = Some(
+                    line.strip_prefix("event:")
+                        .unwrap_or(line)
+                        .trim()
+                        .to_string(),
+                );
             } else if line.starts_with("id:") {
-                current_event.id = Some(line.strip_prefix("id:").unwrap_or(line).trim().to_string());
+                current_event.id =
+                    Some(line.strip_prefix("id:").unwrap_or(line).trim().to_string());
             } else if line.starts_with("retry:") {
                 current_event.retry = line
                     .strip_prefix("retry:")
@@ -87,13 +93,16 @@ impl SseEvent {
 }
 
 pub fn parse_sse_content(content: &[u8]) -> Result<Vec<SseEvent>, String> {
-    let text = String::from_utf8(content.to_vec())
-        .map_err(|e| format!("Invalid UTF-8: {}", e))?;
+    let text = String::from_utf8(content.to_vec()).map_err(|e| format!("Invalid UTF-8: {}", e))?;
     Ok(SseEvent::parse(&text))
 }
 
 pub fn format_sse_content(events: &[SseEvent]) -> Vec<u8> {
-    events.iter().map(|e| e.format()).collect::<String>().into_bytes()
+    events
+        .iter()
+        .map(|e| e.format())
+        .collect::<String>()
+        .into_bytes()
 }
 
 pub fn compare_sse_events(
