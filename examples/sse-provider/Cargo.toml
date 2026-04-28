@@ -1,0 +1,13 @@
+[package]
+name = "sse-provider"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.4.0"
+fakeit = "1.3.0"
+rand = "0.8.5"
+anyhow = "1.0.75"
+simple-log = "1.1.0"
+log = "0.4.20"
+uuid = { version = "1.6.1", features = ["v4"] }
