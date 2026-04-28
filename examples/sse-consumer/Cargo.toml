@@ -1,5 +1,5 @@
 [package]
-name = "sse-consumer-rust"
+name = "sse-consumer"
 version = "0.1.0"
 edition = "2021"
 
