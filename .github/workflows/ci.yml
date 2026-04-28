@@ -25,13 +25,13 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --verbose
@@ -39,8 +39,21 @@ jobs:
       - name: Build Release
         run: cargo build --release --verbose
 
-      - name: Run tests
+      - name: Install Plugin
+        run: |
+          mkdir -p ~/.pact/plugins/sse-0.1.0
+          cp target/release/pact-sse-plugin ~/.pact/plugins/sse-0.1.0/
+          cp pact-plugin.json ~/.pact/plugins/sse-0.1.0/
+        shell: bash
+
+      - name: Run tests (unit)
         run: cargo test --verbose
+
+      - name: Run tests (consumer)
+        run: cargo test --verbose
+        working-directory: examples/sse-consumer
+        env:
+          PACT_DO_NOT_TRACK: "true"
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
