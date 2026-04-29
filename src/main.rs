@@ -20,8 +20,10 @@ use crate::proto::catalogue_entry::EntryType;
 use crate::proto::pact_plugin_server::{PactPlugin, PactPluginServer};
 use crate::sse_content::{compare_sse_contents, generate_sse_content, setup_sse_contents};
 
+#[allow(dead_code)]
 mod proto;
 mod parser;
+#[allow(dead_code)]
 mod utils;
 mod sse_content;
 
@@ -74,13 +76,10 @@ impl PactPlugin for SsePactPlugin {
     let rules = request.rules.iter()
       .map(|(key, rules)| {
         let rules = rules.rule.iter().fold(RuleList::empty(RuleLogic::And), |mut list, rule| {
-          match crate::proto::to_object(&rule.values.as_ref().unwrap()) {
-            Value::Object(mut map) => {
-              map.insert("match".to_string(), Value::String(rule.r#type.clone()));
-              debug!("Creating matching rule with {:?}", map);
-              list.add_rule(&MatchingRule::from_json(&Value::Object(map)).unwrap());
-            }
-            _ => {}
+          if let Value::Object(mut map) = crate::proto::to_object(rule.values.as_ref().unwrap()) {
+            map.insert("match".to_string(), Value::String(rule.r#type.clone()));
+            debug!("Creating matching rule with {:?}", map);
+            list.add_rule(&MatchingRule::from_json(&Value::Object(map)).unwrap());
           }
           list
         });
@@ -184,7 +183,7 @@ impl Stream for TcpIncoming {
 
   fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
     Pin::new(&mut self.inner).poll_accept(cx)
-      .map_ok(|(stream, _)| stream).map(|v| Some(v))
+      .map_ok(|(stream, _)| stream).map(Some)
   }
 }
 

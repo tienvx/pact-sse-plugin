@@ -14,7 +14,7 @@ pub fn to_value(value: &Value) -> prost_types::Value {
     }
     Value::String(s) => prost_types::Value { kind: Some(prost_types::value::Kind::StringValue(s.clone())) },
     Value::Array(v) => prost_types::Value { kind: Some(prost_types::value::Kind::ListValue(prost_types::ListValue {
-      values: v.iter().map(|val| to_value(val)).collect()
+      values: v.iter().map(to_value).collect()
     })) },
     Value::Object(m) => prost_types::Value { kind: Some(prost_types::value::Kind::StructValue(prost_types::Struct {
       fields: m.iter().map(|(key, val)| (key.clone(), to_value(val))).collect()
@@ -31,7 +31,7 @@ pub fn from_value(value: &prost_types::Value) -> Value {
     Kind::StructValue(s) => Value::Object(s.fields.iter()
       .map(|(k, v)| (k.clone(), from_value(v))).collect()),
     Kind::ListValue(l) => Value::Array(l.values.iter()
-      .map(|v| from_value(v)).collect())
+      .map(from_value).collect())
   }
 }
 

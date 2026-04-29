@@ -40,7 +40,7 @@ impl SseEvent {
         if let Some(ref data) = self.data {
             result.push_str(&format!("data:{}\n", data));
         }
-        result.push_str("\n");
+        result.push('\n');
         result
     }
 }
@@ -115,14 +115,13 @@ pub fn setup_sse_contents(
             let mut generators = hashmap! {};
             let mut markdown = String::from("# SSE Events\n\n|type|data|\n|---|---|\n");
 
-            for event_def in events.iter() {
-                if let Some((md, field_key)) = event_def {
-                    let event_type = field_key.event_type.clone().unwrap_or_default();
+          for (md, field_key) in events.iter().flatten() {
+               let event_type = field_key.event_type.clone().unwrap_or_default();
                     if !event_type.is_empty() {
                         sse_output.push_str(&format!("event:{}\n", event_type));
                     }
                     sse_output.push_str(&format!("data:{}\n", md.value));
-                    sse_output.push_str("\n");
+                    sse_output.push('\n');
 
                     let path = field_key.path();
                     let rule_type = md.rules.first().and_then(|r| {
@@ -163,9 +162,8 @@ pub fn setup_sse_contents(
                         });
                     }
 
-                    markdown.push_str(&format!("|{}|{}|\n", event_type, md.value));
-                }
-            }
+         markdown.push_str(&format!("|{}|{}|\n", event_type, md.value));
+           }
 
             debug!("matching rules = {:?}", rules);
             debug!("generators = {:?}", generators);
@@ -422,7 +420,7 @@ pub fn generate_sse_content(
             }
         }
 
-        output.push_str("\n");
+        output.push('\n');
     }
 
     debug!("Generated SSE contents has {} bytes", output.len());

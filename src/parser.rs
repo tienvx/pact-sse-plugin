@@ -41,6 +41,7 @@ impl FieldKey {
     }
   }
 
+  #[allow(dead_code)]
   pub fn is_typed(&self) -> bool {
     self.event_type.is_some()
   }
@@ -152,7 +153,7 @@ pub(crate) fn parse_field(s: &str) -> anyhow::Result<FieldKey> {
 pub(crate) fn parse_value(v: &prost_types::Value) -> anyhow::Result<MatchingRuleDefinition> {
   if let Some(kind) = &v.kind {
     match kind {
-      Kind::StringValue(s) => parse_matcher_def(&s),
+      Kind::StringValue(s) => parse_matcher_def(s),
       Kind::NullValue(_) => Err(anyhow!("Null is not a valid value definition")),
       Kind::NumberValue(_) => Err(anyhow!("Number is not a valid value definition")),
       Kind::BoolValue(_) => Err(anyhow!("Bool is not a valid value definition")),

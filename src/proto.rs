@@ -17,7 +17,7 @@ pub fn to_value(v: &prost_types::Value) -> Value {
       Kind::StringValue(s) => Value::String(s.clone()),
       Kind::BoolValue(b) => Value::Bool(*b),
       Kind::StructValue(s) => to_object(s),
-      Kind::ListValue(l) => Value::Array(l.values.iter().map(|v| to_value(v)).collect())
+      Kind::ListValue(l) => Value::Array(l.values.iter().map(to_value).collect())
     }
     None => Value::Null
   }
