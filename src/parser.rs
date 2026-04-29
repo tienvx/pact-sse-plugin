@@ -34,9 +34,9 @@ pub struct FieldKey {
 impl FieldKey {
     pub fn path(&self) -> String {
         match &self.event_type {
-            Some(et) => format!("{}[{}][*]", self.field, et),
+            Some(et) => format!("{}.{}.*", self.field, et),
             None if self.field == "event" || self.field == "retry" => self.field.clone(),
-            None => format!("{}[*]", self.field),
+            None => format!("{}.*", self.field),
         }
     }
 
@@ -194,7 +194,7 @@ mod tests {
         let key = parse_field("data[count]").unwrap();
         assert_eq!(key.field, "data");
         assert_eq!(key.event_type, Some("count".to_string()));
-        assert_eq!(key.path(), "data[count][*]");
+        assert_eq!(key.path(), "data.count.*");
     }
 
     #[test]
@@ -202,7 +202,7 @@ mod tests {
         let key = parse_field("id[user][*]").unwrap();
         assert_eq!(key.field, "id");
         assert_eq!(key.event_type, Some("user".to_string()));
-        assert_eq!(key.path(), "id[user][*]");
+        assert_eq!(key.path(), "id.user.*");
     }
 
     #[test]
@@ -210,7 +210,7 @@ mod tests {
         let key = parse_field("data[*]").unwrap();
         assert_eq!(key.field, "data");
         assert!(key.event_type.is_none());
-        assert_eq!(key.path(), "data[*]");
+        assert_eq!(key.path(), "data.*");
     }
 
     #[test]
@@ -218,7 +218,7 @@ mod tests {
         let key = parse_field("data.count.*").unwrap();
         assert_eq!(key.field, "data");
         assert_eq!(key.event_type, Some("count".to_string()));
-        assert_eq!(key.path(), "data[count][*]");
+        assert_eq!(key.path(), "data.count.*");
     }
 
     #[test]
@@ -226,6 +226,6 @@ mod tests {
         let key = parse_field("id.*").unwrap();
         assert_eq!(key.field, "id");
         assert!(key.event_type.is_none());
-        assert_eq!(key.path(), "id[*]");
+        assert_eq!(key.path(), "id.*");
     }
 }
