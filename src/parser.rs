@@ -11,17 +11,16 @@ enum FieldToken {
     #[token("]")]
     RBracket,
 
-    #[token(".")]
-    Dot,
-
     #[token("*")]
     Asterisk,
 
-    #[regex("[a-zA-Z_*][a-zA-Z0-9_*]*", |lex| lex.slice().to_string())]
+    #[token(".")]
+    Dot,
+
+    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Word(String),
 
     #[regex(r"[ \t\n\f]+", logos::skip)]
-    #[error]
     Error,
 }
 
@@ -46,6 +45,16 @@ impl FieldKey {
     }
 }
 
+fn next_token(lex: &mut logos::Lexer<FieldToken>) -> Option<FieldToken> {
+    loop {
+        match lex.next() {
+            Some(Ok(token)) => return Some(token),
+            Some(Err(_)) => continue,
+            None => return None,
+        }
+    }
+}
+
 pub(crate) fn parse_field(s: &str) -> anyhow::Result<FieldKey> {
     let s = s.trim();
 
@@ -64,21 +73,19 @@ pub(crate) fn parse_field(s: &str) -> anyhow::Result<FieldKey> {
 
     let mut lex = FieldToken::lexer(s);
 
-    let first = lex
-        .next()
+    let first = next_token(&mut lex)
         .ok_or_else(|| anyhow!("Empty field definition: '{}'", s))?;
-    if let FieldToken::Word(word) = first {
-        let field = word;
+    if let FieldToken::Word(ref word) = first {
+        let field = word.clone();
 
-        match lex.next() {
+        match next_token(&mut lex) {
             Some(FieldToken::LBracket) => {
-                let et = lex
-                    .next()
+                let et = next_token(&mut lex)
                     .ok_or_else(|| anyhow!("Expected event type in '{}'", s))?;
                 match et {
                     FieldToken::Asterisk => {
                         // data[*] means "all events" (no specific type)
-                        let closing = lex.next();
+                        let closing = next_token(&mut lex);
                         if closing != Some(FieldToken::RBracket) {
                             return Err(anyhow!("Expected ']' in field definition: '{}'", s));
                         }
@@ -87,26 +94,26 @@ pub(crate) fn parse_field(s: &str) -> anyhow::Result<FieldKey> {
                             event_type: None,
                         })
                     }
-                    FieldToken::Word(et) => {
-                        let closing = lex.next();
+                    FieldToken::Word(ref et) => {
+                        let closing = next_token(&mut lex);
                         if closing != Some(FieldToken::RBracket) {
                             return Err(anyhow!("Expected ']' in field definition: '{}'", s));
                         }
                         // Check for optional [*] suffix
-                        let next = lex.next();
+                        let next = next_token(&mut lex);
                         if next == Some(FieldToken::LBracket) {
-                            let wildcard = lex.next();
+                            let wildcard = next_token(&mut lex);
                             if wildcard != Some(FieldToken::Asterisk) {
                                 return Err(anyhow!("Expected '[*]' in field definition: '{}'", s));
                             }
-                            let closing = lex.next();
+                            let closing = next_token(&mut lex);
                             if closing != Some(FieldToken::RBracket) {
                                 return Err(anyhow!("Expected ']' in field definition: '{}'", s));
                             }
                         }
                         Ok(FieldKey {
                             field,
-                            event_type: Some(et),
+                            event_type: Some(et.clone()),
                         })
                     }
                     _ => Err(anyhow!("Expected event type in field definition: '{}'", s)),
@@ -114,14 +121,13 @@ pub(crate) fn parse_field(s: &str) -> anyhow::Result<FieldKey> {
             }
             Some(FieldToken::Dot) => {
                 // Handle dot notation: field.type.*
-                let et = lex
-                    .next()
+                let et = next_token(&mut lex)
                     .ok_or_else(|| anyhow!("Expected event type after '.' in '{}'", s))?;
-                if let FieldToken::Word(et) = et {
+                if let FieldToken::Word(ref et) = et {
                     // Check for trailing .*
-                    let dot = lex.next();
+                    let dot = next_token(&mut lex);
                     if dot == Some(FieldToken::Dot) {
-                        let asterisk = lex.next();
+                        let asterisk = next_token(&mut lex);
                         if asterisk != Some(FieldToken::Asterisk) {
                             return Err(anyhow!(
                                 "Expected '*' after '.' in field definition: '{}'",
@@ -131,7 +137,7 @@ pub(crate) fn parse_field(s: &str) -> anyhow::Result<FieldKey> {
                     }
                     Ok(FieldKey {
                         field,
-                        event_type: Some(et),
+                        event_type: Some(et.clone()),
                     })
                 } else if let FieldToken::Asterisk = et {
                     // field.* means all events (no specific type)

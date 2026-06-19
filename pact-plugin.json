@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "pluginInterfaceVersion": 1,
+  "pluginInterfaceVersion": 2,
   "name": "sse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "executableType": "exec",
   "entryPoint": "pact-sse-plugin"
 }

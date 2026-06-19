@@ -1,6 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true)
-        .compile(&["proto/plugin.proto"], &["proto"])?;
+        .compile_protos(&["proto/plugin_v2.proto"], &["proto"])?;
     Ok(())
 }

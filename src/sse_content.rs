@@ -3,7 +3,7 @@ use bytes::Bytes;
 use either::Either;
 use log::debug;
 use maplit::hashmap;
-use pact_matching::matchers::Matches;
+use pact_matching::matchingrules::Matches;
 use pact_models::bodies::OptionalBody;
 use pact_models::generators::{GenerateValue, Generator, NoopVariantMatcher, VariantMatcher};
 use pact_models::matchingrules::RuleList;
@@ -169,15 +169,15 @@ pub fn setup_sse_contents(
                     },
                 );
 
-                if let Some(ref gen) = md.generator {
+                if let Some(ref generator) = md.generator {
                     let mut gen_values: BTreeMap<String, prost_types::Value> = BTreeMap::new();
-                    for (k, v) in gen.values() {
+                    for (k, v) in generator.values() {
                         gen_values.insert(k.to_string(), to_value(&v));
                     }
                     generators.insert(
                         "event".to_string(),
                         proto::Generator {
-                            r#type: gen.name(),
+                            r#type: generator.name(),
                             values: Some(prost_types::Struct { fields: gen_values }),
                         },
                     );
@@ -221,15 +221,15 @@ pub fn setup_sse_contents(
                     },
                 );
 
-                if let Some(ref gen) = md.generator {
+                if let Some(ref generator) = md.generator {
                     let mut gen_values: BTreeMap<String, prost_types::Value> = BTreeMap::new();
-                    for (k, v) in gen.values() {
+                    for (k, v) in generator.values() {
                         gen_values.insert(k.to_string(), to_value(&v));
                     }
                     generators.insert(
                         "retry".to_string(),
                         proto::Generator {
-                            r#type: gen.name(),
+                            r#type: generator.name(),
                             values: Some(prost_types::Struct { fields: gen_values }),
                         },
                     );
@@ -273,15 +273,15 @@ pub fn setup_sse_contents(
                     },
                 );
 
-                if let Some(ref gen) = md.generator {
+                if let Some(ref generator) = md.generator {
                     let mut gen_values: BTreeMap<String, prost_types::Value> = BTreeMap::new();
-                    for (k, v) in gen.values() {
+                    for (k, v) in generator.values() {
                         gen_values.insert(k.to_string(), to_value(&v));
                     }
                     generators.insert(
                         "id.*".to_string(),
                         proto::Generator {
-                            r#type: gen.name(),
+                            r#type: generator.name(),
                             values: Some(prost_types::Struct { fields: gen_values }),
                         },
                     );
@@ -345,15 +345,15 @@ pub fn setup_sse_contents(
                     },
                 );
 
-                if let Some(ref gen) = md.generator {
+                if let Some(ref generator) = md.generator {
                     let mut gen_values: BTreeMap<String, prost_types::Value> = BTreeMap::new();
-                    for (k, v) in gen.values() {
+                    for (k, v) in generator.values() {
                         gen_values.insert(k.to_string(), to_value(&v));
                     }
                     generators.insert(
                         path,
                         proto::Generator {
-                            r#type: gen.name(),
+                            r#type: generator.name(),
                             values: Some(prost_types::Struct { fields: gen_values }),
                         },
                     );
@@ -428,6 +428,7 @@ pub fn compare_sse_contents(
                         ),
                         path: format!("{}.data", event_prefix),
                         diff: "".to_string(),
+                        mismatch_type: "body".to_string(),
                     });
                 }
             }
@@ -444,13 +445,14 @@ pub fn compare_sse_contents(
         if let Some(ref act_id) = act.id {
             if let Some(rule_list) = rules.get("id.*") {
                 for rule in &rule_list.rules {
-                    if let Err(err) = act_id.matches_with(act_id, rule, false) {
+                    if let Err(err) = act_id.matches_with(act_id.clone(), rule, false) {
                         mismatches.push(proto::ContentMismatch {
                             expected: None,
                             actual: Some(act_id.as_bytes().to_vec()),
                             mismatch: err.to_string(),
                             path: format!("{}.id", event_prefix),
                             diff: "".to_string(),
+                            mismatch_type: "body".to_string(),
                         });
                     }
                 }
@@ -460,13 +462,16 @@ pub fn compare_sse_contents(
         if let Some(ref act_retry) = act.retry {
             if let Some(rule_list) = rules.get("retry") {
                 for rule in &rule_list.rules {
-                    if let Err(err) = act_retry.matches_with(act_retry, rule, false) {
+                    if let Err(err) =
+                        act_retry.matches_with(act_retry.clone(), rule, false)
+                    {
                         mismatches.push(proto::ContentMismatch {
                             expected: None,
                             actual: Some(act_retry.as_bytes().to_vec()),
                             mismatch: err.to_string(),
                             path: format!("{}.retry", event_prefix),
                             diff: "".to_string(),
+                            mismatch_type: "body".to_string(),
                         });
                     }
                 }
@@ -502,13 +507,14 @@ fn compare_event(
     if let Some(ref act_id) = act.id {
         if let Some(rule_list) = rules.get("id.*") {
             for rule in &rule_list.rules {
-                if let Err(err) = act_id.matches_with(act_id, rule, false) {
+                if let Err(err) = act_id.matches_with(act_id.clone(), rule, false) {
                     mismatches.push(proto::ContentMismatch {
                         expected: None,
                         actual: Some(act_id.as_bytes().to_vec()),
                         mismatch: err.to_string(),
                         path: format!("{}.id", event_prefix),
                         diff: "".to_string(),
+                        mismatch_type: "body".to_string(),
                     });
                 }
             }
@@ -519,13 +525,16 @@ fn compare_event(
     if let Some(ref act_retry) = act.retry {
         if let Some(rule_list) = rules.get("retry") {
             for rule in &rule_list.rules {
-                if let Err(err) = act_retry.matches_with(act_retry, rule, false) {
+                if let Err(err) =
+                    act_retry.matches_with(act_retry.clone(), rule, false)
+                {
                     mismatches.push(proto::ContentMismatch {
                         expected: None,
                         actual: Some(act_retry.as_bytes().to_vec()),
                         mismatch: err.to_string(),
                         path: format!("{}.retry", event_prefix),
                         diff: "".to_string(),
+                        mismatch_type: "body".to_string(),
                     });
                 }
             }
@@ -537,13 +546,16 @@ fn compare_event(
         if let Some(ref act_event_type) = act.event_type {
             if let Some(rule_list) = rules.get("event") {
                 for rule in &rule_list.rules {
-                    if let Err(err) = exp_event_type.matches_with(act_event_type, rule, false) {
+                    if let Err(err) =
+                        exp_event_type.matches_with(act_event_type.clone(), rule, false)
+                    {
                         mismatches.push(proto::ContentMismatch {
                             expected: Some(exp_event_type.as_bytes().to_vec()),
                             actual: Some(act_event_type.as_bytes().to_vec()),
                             mismatch: err.to_string(),
                             path: format!("{}.event", event_prefix),
                             diff: "".to_string(),
+                            mismatch_type: "body".to_string(),
                         });
                     }
                 }
@@ -557,6 +569,7 @@ fn compare_event(
                     ),
                     path: format!("{}.event", event_prefix),
                     diff: "".to_string(),
+                    mismatch_type: "body".to_string(),
                 });
             }
         } else if rules.get("event").is_some() {
@@ -571,6 +584,7 @@ fn compare_event(
                 ),
                 path: format!("{}.event", event_prefix),
                 diff: "".to_string(),
+                mismatch_type: "body".to_string(),
             });
         }
     }
@@ -581,13 +595,16 @@ fn compare_event(
         if let Some(ref act_data) = act.data {
             if let Some(rule_list) = rules.get(&rule_path) {
                 for rule in &rule_list.rules {
-                    if let Err(err) = exp_data.matches_with(act_data, rule, false) {
+                    if let Err(err) =
+                        exp_data.matches_with(act_data.clone(), rule, false)
+                    {
                         mismatches.push(proto::ContentMismatch {
                             expected: Some(exp_data.as_bytes().to_vec()),
                             actual: Some(act_data.as_bytes().to_vec()),
                             mismatch: err.to_string(),
                             path: format!("{}.data", event_prefix),
                             diff: "".to_string(),
+                            mismatch_type: "body".to_string(),
                         });
                     }
                 }
@@ -598,6 +615,7 @@ fn compare_event(
                     mismatch: format!("Expected data '{}', but got '{}'", exp_data, act_data),
                     path: format!("{}.data", event_prefix),
                     diff: "".to_string(),
+                    mismatch_type: "body".to_string(),
                 });
             }
         } else {
@@ -607,6 +625,7 @@ fn compare_event(
                 mismatch: format!("Expected data '{}', but event has no data", exp_data),
                 path: format!("{}.data", event_prefix),
                 diff: "".to_string(),
+                mismatch_type: "body".to_string(),
             });
         }
     }
@@ -616,13 +635,16 @@ fn compare_event(
         if let Some(ref act_id) = act.id {
             if let Some(rule_list) = rules.get("id.*") {
                 for rule in &rule_list.rules {
-                    if let Err(err) = act_id.matches_with(act_id, rule, false) {
+                    if let Err(err) =
+                        act_id.matches_with(act_id.clone(), rule, false)
+                    {
                         mismatches.push(proto::ContentMismatch {
                             expected: None,
                             actual: Some(act_id.as_bytes().to_vec()),
                             mismatch: err.to_string(),
                             path: format!("{}.id", event_prefix),
                             diff: "".to_string(),
+                            mismatch_type: "body".to_string(),
                         });
                     }
                 }
@@ -631,13 +653,16 @@ fn compare_event(
         if let Some(ref act_retry) = act.retry {
             if let Some(rule_list) = rules.get("retry") {
                 for rule in &rule_list.rules {
-                    if let Err(err) = act_retry.matches_with(act_retry, rule, false) {
+                    if let Err(err) =
+                        act_retry.matches_with(act_retry.clone(), rule, false)
+                    {
                         mismatches.push(proto::ContentMismatch {
                             expected: None,
                             actual: Some(act_retry.as_bytes().to_vec()),
                             mismatch: err.to_string(),
                             path: format!("{}.retry", event_prefix),
                             diff: "".to_string(),
+                            mismatch_type: "body".to_string(),
                         });
                     }
                 }
@@ -652,9 +677,9 @@ pub fn generate_sse_content(
     let request = request.get_ref();
 
     let mut generators_map: HashMap<String, Generator> = HashMap::new();
-    for (key, gen) in &request.generators {
+    for (key, generator) in &request.generators {
         let field_key = crate::parser::parse_field(key)?;
-        let values_map: Map<String, Value> = gen
+        let values_map: Map<String, Value> = generator
             .values
             .as_ref()
             .ok_or_else(|| anyhow!("Generator values were expected"))?
@@ -662,8 +687,8 @@ pub fn generate_sse_content(
             .iter()
             .map(|(k, v)| (k.clone(), from_value(v)))
             .collect();
-        let generator = Generator::from_map(&gen.r#type, &values_map)
-            .ok_or_else(|| anyhow!("Failed to build generator of type {}", gen.r#type))?;
+        let generator = Generator::from_map(&generator.r#type, &values_map)
+            .ok_or_else(|| anyhow!("Failed to build generator of type {}", generator.r#type))?;
         generators_map.insert(field_key.path(), generator);
     }
 
@@ -679,8 +704,8 @@ pub fn generate_sse_content(
         let event_type = event.event_type.clone();
 
         if let Some(ref retry) = event.retry {
-            if let Some(gen) = generators_map.get("retry") {
-                let val: String = gen.generate_value(retry, &context, &variant_matcher)?;
+            if let Some(generator) = generators_map.get("retry") {
+                let val: String = generator.generate_value(retry, &context, &variant_matcher)?;
                 output.push_str(&format!("retry:{}\n", val));
             } else {
                 output.push_str(&format!("retry:{}\n", retry));
@@ -698,8 +723,8 @@ pub fn generate_sse_content(
                 "data[*]".to_string()
             };
 
-            let val = if let Some(gen) = generators_map.get(&gen_key) {
-                gen.generate_value(data, &context, &variant_matcher)?
+            let val = if let Some(generator) = generators_map.get(&gen_key) {
+                generator.generate_value(data, &context, &variant_matcher)?
             } else {
                 data.clone()
             };
@@ -719,8 +744,8 @@ pub fn generate_sse_content(
                 "id[*]".to_string()
             };
 
-            if let Some(gen) = generators_map.get(&gen_key) {
-                let val: String = gen.generate_value(id, &context, &variant_matcher)?;
+            if let Some(generator) = generators_map.get(&gen_key) {
+                let val: String = generator.generate_value(id, &context, &variant_matcher)?;
                 output.push_str(&format!("id:{}\n", val));
             } else {
                 output.push_str(&format!("id:{}\n", id));

@@ -1,4 +1,7 @@
-// Proto file for Pact plugin interface V1
+// Proto file for Pact plugin interface V2
+//
+// NOTE: This initial V2 proto intentionally mirrors V1 while the
+// capability-negotiation changes are introduced incrementally.
 
 syntax = "proto3";
 
@@ -6,8 +9,8 @@ import "google/protobuf/struct.proto";
 import "google/protobuf/wrappers.proto";
 import "google/protobuf/empty.proto";
 
-package io.pact.plugin;
-option go_package = "io.pact.plugin";
+package io.pact.plugin.v2;
+option go_package = "io.pact.plugin.v2";
 
 // Request to verify the plugin has loaded OK
 message InitPluginRequest {
@@ -15,6 +18,8 @@ message InitPluginRequest {
   string implementation = 1;
   // Version of the implementation
   string version = 2;
+  // Host capabilities provided by the driver and available to the plugin
+  repeated string hostCapabilities = 3;
 }
 
 // Entry to be added to the core catalogue. Each entry describes one of the features the plugin provides.
@@ -41,10 +46,28 @@ message CatalogueEntry {
   map<string, string> values = 3;
 }
 
-// Response to init plugin, providing the catalogue entries the plugin provides
-message InitPluginResponse {
+// Successful result of initialising the plugin
+message InitPluginSuccess {
   // List of entries the plugin supports
   repeated CatalogueEntry catalogue = 1;
+  // Optional capabilities negotiated for this plugin instance
+  repeated string pluginCapabilities = 2;
+}
+
+// Failure result of initialising the plugin
+message InitPluginFailure {
+  // Error explaining why initialisation failed
+  string error = 1;
+  // Host capabilities the plugin requires but were not provided by the driver
+  repeated string missingHostCapabilities = 2;
+}
+
+// Response to init plugin, providing either the negotiated success response or a structured failure
+message InitPluginResponse {
+  oneof response {
+    InitPluginSuccess success = 1;
+    InitPluginFailure failure = 2;
+  }
 }
 
 // Catalogue of Core Pact + Plugin features
@@ -108,6 +131,8 @@ message ContentMismatch {
   string path = 4;
   // Optional diff of the contents
   string diff = 5;
+  // Part of the interaction that the mismatch is for: body, headers, metadata, etc.
+  string mismatchType = 6;
 }
 
 // List of content mismatches
@@ -163,6 +188,20 @@ message PluginConfiguration {
   google.protobuf.Struct pactConfiguration = 2;
 }
 
+// Structured interaction data sent to V2 plugins in place of raw pact JSON.
+// Contains only the data the plugin needs, eliminating the need for plugins
+// to parse full Pact documents.
+message InteractionContents {
+  // The V4 interaction type (e.g. "Synchronous/HTTP", "Synchronous/Messages")
+  string interactionType = 1;
+  // Plugin configuration stored by the plugin during the consumer test
+  PluginConfiguration pluginConfiguration = 2;
+  // Consumer name, for result reporting and log correlation
+  string consumer = 3;
+  // Provider name, for result reporting and log correlation
+  string provider = 4;
+}
+
 // Response to the configure/setup an interaction request
 message InteractionResponse {
   // Contents for the interaction
@@ -188,6 +227,10 @@ message InteractionResponse {
   // Description of what part this interaction belongs to (in the case of there being more than one, for instance,
   // request/response messages)
   string partName = 8;
+  // All matching rules to apply to any message metadata
+  map<string, MatchingRules> metadata_rules = 9;
+  // Generators to apply to any message metadata
+  map<string, Generator> metadata_generators = 10;
 }
 
 // Response to the configure/setup an interaction request
@@ -208,6 +251,25 @@ message GenerateContentRequest {
   map<string, Generator> generators = 2;
   // Additional data added to the Pact/Interaction by the plugin
   PluginConfiguration pluginConfiguration = 3;
+  // Context data provided by the test framework
+  google.protobuf.Struct testContext = 4;
+
+  // The mode of the generation, if running from a consumer test or during provider verification
+  enum TestMode {
+    Unknown = 0;
+    // Running on the consumer side
+    Consumer = 1;
+    // Running on the provider side
+    Provider = 2;
+  }
+  TestMode testMode = 5;
+
+  // Which part the content is for
+  enum ContentFor {
+    Request = 0;
+    Response = 1;
+  }
+  ContentFor contentFor = 6;
 }
 
 // Generated body/message response
@@ -223,8 +285,10 @@ message StartMockServerRequest {
   uint32 port = 2;
   // If TLS should be used (if supported by the mock server)
   bool tls = 3;
-  // Pact as JSON to use for the mock server behaviour
-  string pact = 4;
+  // Structured interaction data (replaces the pact JSON string from V1)
+  repeated InteractionContents interactions = 4;
+  // Context data provided by the test framework
+  google.protobuf.Struct testContext = 5;
 }
 
 // Response to the start mock server request
@@ -248,8 +312,7 @@ message MockServerDetails {
   string address = 3;
 }
 
-// Request to shut down a running mock server
-// TODO: replace this with MockServerRequest in the next major version
+// Request to shut down a running mock server (deprecated in V2; use MockServerRequest)
 message ShutdownMockServerRequest {
   // The server ID to shutdown
   string serverKey = 1;
@@ -271,8 +334,7 @@ message MockServerResult {
   repeated ContentMismatch mismatches = 3;
 }
 
-// Response to the shut down mock server request
-// TODO: replace this with MockServerResults in the next major version
+// Response to the shut down mock server request (deprecated in V2; use MockServerResults)
 message ShutdownMockServerResponse {
   // If the mock status is all ok
   bool ok = 1;
@@ -290,12 +352,12 @@ message MockServerResults {
 
 // Request to prepare an interaction for verification
 message VerificationPreparationRequest {
-  // Pact as JSON to use for the verification
-  string pact = 1;
-  // Interaction key for the interaction from the Pact that is being verified
-  string interactionKey = 2;
+  // Structured interaction data (replaces pact JSON + interactionKey from V1)
+  InteractionContents interactionContents = 1;
   // Any data supplied by the user to verify the interaction
-  google.protobuf.Struct config = 3;
+  google.protobuf.Struct config = 2;
+  // Context data provided by the test framework
+  google.protobuf.Struct testContext = 3;
 }
 
 // Request metadata value. Will either be a JSON-like value, or binary data
@@ -331,10 +393,10 @@ message VerifyInteractionRequest {
   InteractionData interactionData = 1;
   // Any data supplied by the user to verify the interaction
   google.protobuf.Struct config = 2;
-  // Pact as JSON to use for the verification
-  string pact = 3;
-  // Interaction key for the interaction from the Pact that is being verified
-  string interactionKey = 4;
+  // Structured interaction data (replaces pact JSON + interactionKey from V1)
+  InteractionContents interactionContents = 3;
+  // Context data provided by the test framework
+  google.protobuf.Struct testContext = 4;
 }
 
 message VerificationResultItem {
@@ -379,16 +441,15 @@ service PactPlugin {
   rpc GenerateContent(GenerateContentRequest) returns (GenerateContentResponse);
 
   // Start a mock server
-//  rpc StartMockServer(StartMockServerRequest) returns (StartMockServerResponse);
-//  // Shutdown a running mock server
-//  // TODO: Replace the message types with MockServerRequest and MockServerResults in the next major version
-//  rpc ShutdownMockServer(ShutdownMockServerRequest) returns (ShutdownMockServerResponse);
-//  // Get the matching results from a running mock server
-//  rpc GetMockServerResults(MockServerRequest) returns (MockServerResults);
-//
-//  // Prepare an interaction for verification. This should return any data required to construct any request
-//  // so that it can be amended before the verification is run
-//  rpc PrepareInteractionForVerification(VerificationPreparationRequest) returns (VerificationPreparationResponse);
-//  // Execute the verification for the interaction.
-//  rpc VerifyInteraction(VerifyInteractionRequest) returns (VerifyInteractionResponse);
+  rpc StartMockServer(StartMockServerRequest) returns (StartMockServerResponse);
+  // Shutdown a running mock server
+  rpc ShutdownMockServer(MockServerRequest) returns (MockServerResults);
+  // Get the matching results from a running mock server
+  rpc GetMockServerResults(MockServerRequest) returns (MockServerResults);
+
+  // Prepare an interaction for verification. This should return any data required to construct any request
+  // so that it can be amended before the verification is run
+  rpc PrepareInteractionForVerification(VerificationPreparationRequest) returns (VerificationPreparationResponse);
+  // Execute the verification for the interaction.
+  rpc VerifyInteraction(VerifyInteractionRequest) returns (VerifyInteractionResponse);
 }
