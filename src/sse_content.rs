@@ -1,8 +1,9 @@
 use anyhow::anyhow;
 use bytes::Bytes;
 use either::Either;
-use log::debug;
 use maplit::hashmap;
+use tracing::debug;
+#[allow(deprecated)]
 use pact_matching::matchingrules::Matches;
 use pact_models::bodies::OptionalBody;
 use pact_models::generators::{GenerateValue, Generator, NoopVariantMatcher, VariantMatcher};

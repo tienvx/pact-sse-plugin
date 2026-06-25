@@ -3,16 +3,17 @@ use core::task::{Context, Poll};
 use std::io;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
-use env_logger::Env;
 use futures::Stream;
-use log::debug;
 use maplit::hashmap;
 use pact_models::matchingrules::{MatchingRule, RuleList, RuleLogic};
 use pact_models::prelude::ContentType;
 use serde_json::Value;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 use tonic::{transport::Server, Response};
+use tracing::{debug, info, warn, Level};
 use uuid::Uuid;
 
 use crate::proto::body::ContentTypeHint;
@@ -22,6 +23,7 @@ use crate::proto::pact_plugin_server::{PactPlugin, PactPluginServer};
 use crate::proto::start_mock_server_response::Response as MockServerResponse;
 use crate::proto::verification_preparation_response::Response as PrepResponse;
 use crate::proto::verify_interaction_response::Response as VerifyResponse;
+use crate::proto::plugin_host_client::PluginHostClient;
 use crate::sse_content::{compare_sse_contents, generate_sse_content, setup_sse_contents};
 
 mod parser;
@@ -30,6 +32,139 @@ mod proto;
 mod sse_content;
 #[allow(dead_code)]
 mod utils;
+
+/// Logger name prefixes that are gRPC transport internals and should not be forwarded via Log RPC.
+const TRANSPORT_TARGET_PREFIXES: &[&str] = &[
+    "h2::",
+    "tower::",
+    "tonic::",
+    "hyper_util::",
+    "hyper::",
+];
+
+fn is_transport_target(target: &str) -> bool {
+    TRANSPORT_TARGET_PREFIXES.iter().any(|p| target.starts_with(p))
+}
+
+struct LogForwarder {
+    client: Mutex<Option<PluginHostClient<tonic::transport::Channel>>>,
+    plugin_instance_id: String,
+}
+
+impl LogForwarder {
+    async fn send_log(
+        &self,
+        level: &str,
+        message: &str,
+        target: &str,
+        test_run_id: &str,
+        timestamp_ms: i64,
+    ) {
+        let mut client = self.client.lock().await;
+        if let Some(ref mut client) = *client {
+            let msg = crate::proto::LogMessage {
+                plugin_instance_id: self.plugin_instance_id.clone(),
+                test_run_id: test_run_id.to_string(),
+                level: level.to_string(),
+                message: message.to_string(),
+                target: target.to_string(),
+                timestamp_ms,
+            };
+            if let Err(e) = client
+                .log(tonic::Request::new(msg))
+                .await
+            {
+                eprintln!("[log-forwarder] Failed to send log via RPC: {}", e);
+            }
+        }
+    }
+}
+
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+struct TracingLogLayer {
+    forwarder: Arc<LogForwarder>,
+}
+
+impl<S> tracing_subscriber::layer::Layer<S> for TracingLogLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_record(
+        &self,
+        _span: &tracing::Id,
+        _values: &tracing::span::Record<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+    }
+
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let level = event.metadata().level();
+        let target = event.metadata().target();
+
+        if *level == Level::TRACE || is_transport_target(target) {
+            return;
+        }
+
+        let level_str = match *level {
+            Level::ERROR => "ERROR",
+            Level::WARN => "WARN",
+            Level::INFO => "INFO",
+            Level::DEBUG => "DEBUG",
+            Level::TRACE => "TRACE",
+        };
+
+        let mut visitor = StringVisitor(String::new());
+        event.record(&mut visitor);
+        let message = visitor.0;
+
+        let timestamp_ms = chrono::Utc::now().timestamp_millis();
+        let forwarder = self.forwarder.clone();
+        let _plugin_instance_id = forwarder.plugin_instance_id.clone();
+
+        tokio::task::spawn(async move {
+            forwarder
+                .send_log(level_str, &message, target, "", timestamp_ms)
+                .await;
+        });
+    }
+}
+
+struct StringVisitor(String);
+
+impl<'a> tracing::field::Visit for StringVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if self.0.is_empty() {
+            self.0 = value.to_owned();
+        } else {
+            self.0.push_str(&format!(" {}={} ", field.name(), value));
+        }
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if self.0.is_empty() {
+            self.0 = format!("{}", field.name());
+        } else {
+            self.0.push_str(&format!(" {}={:?} ", field.name(), value));
+        }
+    }
+}
+
+struct TcpIncoming {
+    inner: TcpListener,
+}
+
+impl Stream for TcpIncoming {
+    type Item = Result<TcpStream, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.inner)
+            .poll_accept(cx)
+            .map_ok(|(stream, _)| stream)
+            .map(Some)
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct SsePactPlugin {}
@@ -42,8 +177,11 @@ impl PactPlugin for SsePactPlugin {
     ) -> Result<tonic::Response<proto::InitPluginResponse>, tonic::Status> {
         let message = request.get_ref();
         debug!(
-            "Init request from {}/{}, host capabilities: {:?}",
-            message.implementation, message.version, message.host_capabilities
+            implementation = %message.implementation,
+            version = %message.version,
+            plugin_instance_id = %message.plugin_instance_id,
+            host_capabilities = ?message.host_capabilities,
+            "Init request received"
         );
         Ok(Response::new(proto::InitPluginResponse {
             response: Some(InitResponse::Success(proto::InitPluginSuccess {
@@ -81,7 +219,7 @@ impl PactPlugin for SsePactPlugin {
         request: tonic::Request<proto::CompareContentsRequest>,
     ) -> Result<tonic::Response<proto::CompareContentsResponse>, tonic::Status> {
         let request = request.get_ref();
-        debug!("compare_contents request - {:?}", request);
+        debug!("compare_contents request");
 
         let rules = request
             .rules
@@ -96,7 +234,7 @@ impl PactPlugin for SsePactPlugin {
                                 crate::proto::to_object(rule.values.as_ref().unwrap())
                             {
                                 map.insert("match".to_string(), Value::String(rule.r#type.clone()));
-                                debug!("Creating matching rule with {:?}", map);
+                                debug!(rule = ?map, "Creating matching rule");
                                 list.add_rule(
                                     &MatchingRule::from_json(&Value::Object(map)).unwrap(),
                                 );
@@ -182,8 +320,8 @@ impl PactPlugin for SsePactPlugin {
         request: tonic::Request<proto::ConfigureInteractionRequest>,
     ) -> Result<tonic::Response<proto::ConfigureInteractionResponse>, tonic::Status> {
         debug!(
-            "Received configure_contents request for '{}'",
-            request.get_ref().content_type
+            content_type = %request.get_ref().content_type,
+            "Received configure_contents request"
         );
         setup_sse_contents(&request)
             .map_err(|err| tonic::Status::aborted(format!("Invalid SSE definition: {}", err)))
@@ -196,7 +334,7 @@ impl PactPlugin for SsePactPlugin {
         debug!("Received generate_content request");
         generate_sse_content(&request)
             .map(|contents| {
-                debug!("Generated contents: {}", contents);
+                debug!(bytes = contents.value().map(|v| v.len()).unwrap_or(0), "Generated contents");
                 Response::new(proto::GenerateContentResponse {
                     contents: Some(proto::Body {
                         content_type: contents
@@ -250,11 +388,10 @@ impl PactPlugin for SsePactPlugin {
     ) -> Result<tonic::Response<proto::VerificationPreparationResponse>, tonic::Status> {
         let req = request.get_ref();
         debug!(
-            "Prepare interaction for verification: interaction_type={}",
-            req.interaction_contents
+            interaction_type = ?req.interaction_contents
                 .as_ref()
-                .map(|ic| &ic.interaction_type)
-                .unwrap_or(&String::new())
+                .map(|ic| &ic.interaction_type),
+            "Prepare interaction for verification"
         );
 
         Ok(Response::new(proto::VerificationPreparationResponse {
@@ -411,25 +548,39 @@ impl PactPlugin for SsePactPlugin {
     }
 }
 
-struct TcpIncoming {
-    inner: TcpListener,
-}
-
-impl Stream for TcpIncoming {
-    type Item = Result<TcpStream, std::io::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.inner)
-            .poll_accept(cx)
-            .map_ok(|(stream, _)| stream)
-            .map(Some)
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let env = Env::new().filter("LOG_LEVEL");
-    env_logger::init_from_env(env);
+    let plugin_instance_id =
+        std::env::var("PACT_PLUGIN_INSTANCE_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(io::stderr)
+        .with_target(true)
+        .with_file(true)
+        .with_line_number(true);
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| {
+            tracing_subscriber::EnvFilter::try_new(
+                "info,pact_sse_plugin=DEBUG,h2=warn,tower=warn,tonic=warn,hyper=warn,hyper_util=warn",
+            )
+        })
+        .unwrap();
+
+    let forwarder = Arc::new(LogForwarder {
+        client: Mutex::new(None),
+        plugin_instance_id: plugin_instance_id.clone(),
+    });
+
+    let log_layer = TracingLogLayer {
+        forwarder: forwarder.clone(),
+    };
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(log_layer)
+        .init();
 
     let addr: SocketAddr = "0.0.0.0:0".parse()?;
     let listener = TcpListener::bind(addr).await?;
@@ -442,6 +593,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_key
     );
     let _ = io::stdout().flush();
+
+    info!(
+        port = address.port(),
+        instance_id = %plugin_instance_id,
+        "SSE plugin server listening"
+    );
+
+    if let Ok(host_addr) = std::env::var("PACT_PLUGIN_HOST") {
+        info!(host = %host_addr, "Connecting to PluginHost for log forwarding");
+        match PluginHostClient::connect(format!("http://{}", host_addr)).await {
+            Ok(client) => {
+                info!("Connected to PluginHost for log forwarding");
+                *forwarder.client.lock().await = Some(client);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to connect to PluginHost, log forwarding disabled");
+            }
+        }
+    } else {
+        debug!("PACT_PLUGIN_HOST not set, log forwarding via RPC disabled");
+    }
 
     let plugin = SsePactPlugin::default();
     Server::builder()
